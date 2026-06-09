@@ -89,6 +89,7 @@ canvas{max-height:400px}
   <button class="tab active" data-tab="table">Probability Table</button>
   <button class="tab" data-tab="xg">Match xG</button>
   <button class="tab" data-tab="league">Friends League</button>
+  <button class="tab" data-tab="value">Value Finder</button>
   <button class="tab" data-tab="charts">Championship Odds</button>
   <button class="tab" data-tab="history">Odds History</button>
   <button class="tab" data-tab="bracket">Groups &amp; Bracket</button>
@@ -177,6 +178,48 @@ canvas{max-height:400px}
     <table><thead><tr>
       <th>Grp</th><th>Match</th><th>Pick this</th><th>EV (pts)</th><th>Most likely</th>
     </tr></thead><tbody id="lg-fixtures"></tbody></table>
+  </div>
+</section>
+
+<!-- ─────────── VALUE FINDER ─────────── -->
+<section id="value">
+  <h2>Value Finder — model vs bookmaker</h2>
+  <p style="color:var(--muted);font-size:.8rem;max-width:760px;margin-bottom:1rem">
+    &#9888;&#65039; <strong>Read this first.</strong> An "edge" below means the model disagrees with
+    the bookmaker — and on 1X2 (match result) the bookmaker is usually right, especially
+    for big teams. The model's genuine strength is the <em>goals distribution</em>:
+    Over/Under and Both-Teams-To-Score lines get less attention from traders. Treat
+    1X2 edges as suspect, O/U and BTTS edges as candidates. Never bet more than the
+    suggested &frac14;-Kelly stake, and track your results before trusting it.</p>
+  <div class="controls">
+    <select id="vf-t1"></select>
+    <span style="color:var(--muted)">vs</span>
+    <select id="vf-t2"></select>
+    <select id="vf-stage">
+      <option value="group">Group stage</option>
+      <option value="R32">Round of 32</option>
+      <option value="R16">Round of 16</option>
+      <option value="QF">Quarter-final</option>
+      <option value="SF">Semi-final</option>
+      <option value="F">Final</option>
+    </select>
+  </div>
+  <div class="controls" style="margin-bottom:.5rem">
+    <label>1:</label><input id="vf-o1" type="number" step="0.01" min="1.01" placeholder="2.10" style="width:70px">
+    <label>X:</label><input id="vf-ox" type="number" step="0.01" min="1.01" placeholder="3.40" style="width:70px">
+    <label>2:</label><input id="vf-o2" type="number" step="0.01" min="1.01" placeholder="3.60" style="width:70px">
+    <label style="margin-left:.75rem">O2.5:</label><input id="vf-over" type="number" step="0.01" min="1.01" placeholder="2.00" style="width:70px">
+    <label>U2.5:</label><input id="vf-under" type="number" step="0.01" min="1.01" placeholder="1.85" style="width:70px">
+    <label style="margin-left:.75rem">BTTS Y:</label><input id="vf-bttsy" type="number" step="0.01" min="1.01" placeholder="2.05" style="width:70px">
+    <label>N:</label><input id="vf-bttsn" type="number" step="0.01" min="1.01" placeholder="1.75" style="width:70px">
+  </div>
+  <p style="color:var(--muted);font-size:.75rem;margin-bottom:1rem">
+    Enter decimal odds for any markets you want checked — leave the rest empty.</p>
+  <div class="tbl-wrap" style="max-width:860px">
+    <table><thead><tr>
+      <th>Market</th><th>Model prob</th><th>Your odds</th><th>Implied prob</th>
+      <th>Edge</th><th>&frac14;-Kelly stake</th><th>Verdict</th>
+    </tr></thead><tbody id="vf-results"></tbody></table>
   </div>
 </section>
 
@@ -270,6 +313,69 @@ function init(){
   populateHistSelect(teams);
   initXG(teams);
   renderLeague(teams);
+  initValue(teams);
+}
+
+// ─── VALUE FINDER ───────────────────────────────────────────────────────────
+function initValue(teams){
+  const all=[...teams].sort();
+  ["vf-t1","vf-t2"].forEach((id,i)=>{
+    const sel=document.getElementById(id);
+    all.forEach(t=>{const o=document.createElement("option");o.value=t;o.textContent=t;sel.appendChild(o);});
+    sel.value=teams[i];
+    sel.addEventListener("change",renderValue);
+  });
+  document.getElementById("vf-stage").addEventListener("change",renderValue);
+  ["vf-o1","vf-ox","vf-o2","vf-over","vf-under","vf-bttsy","vf-bttsn"]
+    .forEach(id=>document.getElementById(id).addEventListener("input",renderValue));
+  renderValue();
+}
+
+function renderValue(){
+  const t1=document.getElementById("vf-t1").value;
+  const t2=document.getElementById("vf-t2").value;
+  const stage=document.getElementById("vf-stage").value;
+  const body=document.getElementById("vf-results");
+  if(t1===t2){body.innerHTML="<tr><td colspan=7><em>Pick two different teams.</em></td></tr>";return;}
+  const m=predictMatch(t1,t2,stage);
+  // derived markets from the score grid
+  let pOver=0,pBtts=0;
+  m.all.forEach(([i,j,p])=>{
+    if(i+j>=3)pOver+=p;
+    if(i>=1&&j>=1)pBtts+=p;
+  });
+  const odds=id=>{const v=parseFloat(document.getElementById(id).value);return v>1?v:null;};
+  const markets=[
+    {label:`${t1} win (1)`,p:m.p1,o:odds("vf-o1"),risky:true},
+    {label:"Draw (X)",p:m.pd,o:odds("vf-ox"),risky:true},
+    {label:`${t2} win (2)`,p:m.p2,o:odds("vf-o2"),risky:true},
+    {label:"Over 2.5 goals",p:pOver,o:odds("vf-over")},
+    {label:"Under 2.5 goals",p:1-pOver,o:odds("vf-under")},
+    {label:"BTTS — Yes",p:pBtts,o:odds("vf-bttsy")},
+    {label:"BTTS — No",p:1-pBtts,o:odds("vf-bttsn")},
+  ];
+  body.innerHTML=markets.map(mk=>{
+    const modelP=(mk.p*100).toFixed(1)+"%";
+    if(!mk.o) return `<tr style="opacity:.55"><td>${mk.label}</td><td>${modelP}</td>
+      <td colspan=5 style="color:var(--muted)">enter odds to evaluate</td></tr>`;
+    const implied=1/mk.o;
+    const edge=mk.p*mk.o-1;
+    const kelly=Math.max(0,(mk.p*mk.o-1)/(mk.o-1))/4;
+    let verdict,color;
+    if(edge<=0.02){verdict="no value";color="var(--muted)";}
+    else if(mk.risky){verdict="model vs sharp market — probably model error";color="var(--yellow)";}
+    else if(edge>0.10){verdict="suspiciously large — double-check";color="var(--yellow)";}
+    else{verdict="candidate value bet";color="var(--green)";}
+    return `<tr>
+      <td>${mk.label}</td>
+      <td><strong>${modelP}</strong></td>
+      <td>${mk.o.toFixed(2)}</td>
+      <td>${(implied*100).toFixed(1)}%</td>
+      <td style="color:${edge>0.02?"var(--green)":"var(--muted)"};font-weight:700">${(edge*100).toFixed(1)}%</td>
+      <td>${edge>0.02?(kelly*100).toFixed(1)+"% of bankroll":"—"}</td>
+      <td style="color:${color}">${verdict}</td>
+    </tr>`;
+  }).join("");
 }
 
 // ─── FRIENDS LEAGUE ─────────────────────────────────────────────────────────
