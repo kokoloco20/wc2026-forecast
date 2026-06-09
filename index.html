@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WC 2026 Forecast</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+:root{
+  --bg:#0d1117;--surface:#161b22;--border:#30363d;--accent:#58a6ff;
+  --text:#e6edf3;--muted:#7d8590;--green:#3fb950;--yellow:#d29922;--red:#f85149;
+  --r1:#1f6feb;--r2:#388bfd;--qf:#56d364;--sf:#d29922;--final:#e3b341;--w:#ffd700;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.5}
+a{color:var(--accent)}
+h1{font-size:1.4rem;font-weight:700}
+h2{font-size:1.1rem;font-weight:600;margin-bottom:.75rem;color:var(--accent)}
+.page{max-width:1200px;margin:0 auto;padding:1rem}
+header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem;padding:1rem 0 1.5rem}
+.meta{font-size:.8rem;color:var(--muted)}
+.tabs{display:flex;gap:.25rem;flex-wrap:wrap;margin-bottom:1.5rem}
+.tab{padding:.4rem .9rem;border-radius:6px;border:1px solid var(--border);cursor:pointer;background:none;color:var(--muted);font-size:.85rem;transition:.15s}
+.tab:hover{background:var(--surface)}
+.tab.active{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600}
+section{display:none}section.active{display:block}
+
+/* ── TABLE ── */
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+thead th{background:var(--surface);padding:.5rem .65rem;text-align:left;cursor:pointer;user-select:none;white-space:nowrap;border-bottom:2px solid var(--border);position:sticky;top:0}
+thead th:hover{color:var(--accent)}
+thead th.sort-asc::after{content:" ▲";font-size:.7rem}
+thead th.sort-desc::after{content:" ▼";font-size:.7rem}
+tbody tr:hover{background:#1c2128}
+tbody td{padding:.4rem .65rem;border-bottom:1px solid var(--border);white-space:nowrap}
+.bar-cell{position:relative;min-width:70px}
+.bar-bg{position:absolute;left:0;top:20%;height:60%;border-radius:2px;opacity:.35}
+.bar-val{position:relative;z-index:1}
+.elo-badge{font-size:.75rem;color:var(--muted);margin-left:.3rem}
+
+/* ── CHARTS ── */
+.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem}
+@media(max-width:700px){.chart-grid{grid-template-columns:1fr}}
+.chart-box{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1rem}
+canvas{max-height:400px}
+
+/* ── HISTORY CONTROLS ── */
+.controls{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem;align-items:center}
+.controls select,.controls input{background:var(--surface);border:1px solid var(--border);color:var(--text);padding:.3rem .6rem;border-radius:6px;font-size:.85rem}
+.controls label{font-size:.85rem;color:var(--muted)}
+
+/* ── BRACKET ── */
+.bracket{overflow-x:auto;padding-bottom:1rem}
+.b-stage{display:flex;flex-direction:column;gap:.5rem;min-width:170px}
+.b-match{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:.35rem .55rem;font-size:.8rem}
+.b-match .team{display:flex;justify-content:space-between;gap:.5rem;padding:.1rem 0}
+.b-match .team span:last-child{color:var(--muted);font-size:.75rem}
+.b-match .vs{font-size:.65rem;color:var(--muted);text-align:center}
+.b-rounds{display:flex;gap:1rem;align-items:flex-start}
+.b-stage-label{font-size:.7rem;color:var(--muted);text-align:center;margin-bottom:.3rem;text-transform:uppercase;letter-spacing:.05em}
+.winner-badge{background:var(--w);color:#000;border-radius:4px;padding:.15rem .4rem;font-size:.75rem;font-weight:700}
+
+/* ── GROUPS (bracket section header) ── */
+.group-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:.75rem;margin-bottom:1.5rem}
+.group-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:.75rem}
+.group-card h3{font-size:.8rem;font-weight:700;color:var(--accent);margin-bottom:.4rem}
+.group-card .gteam{display:flex;justify-content:space-between;padding:.15rem 0;font-size:.82rem;border-bottom:1px solid var(--border)}
+.group-card .gteam:last-child{border-bottom:none}
+.group-card .gteam span:last-child{color:var(--muted);font-size:.75rem}
+</style>
+</head>
+<body>
+<div class="page">
+<header>
+  <div>
+    <h1>&#127942; World Cup 2026 Forecast</h1>
+    <div class="meta" id="meta">Loading forecast.json…</div>
+  </div>
+</header>
+
+<div class="tabs">
+  <button class="tab active" data-tab="table">Probability Table</button>
+  <button class="tab" data-tab="xg">Match xG</button>
+  <button class="tab" data-tab="charts">Championship Odds</button>
+  <button class="tab" data-tab="history">Odds History</button>
+  <button class="tab" data-tab="bracket">Groups &amp; Bracket</button>
+</div>
+
+<!-- ─────────── TABLE ─────────── -->
+<section id="table" class="active">
+  <div class="tbl-wrap">
+    <table id="prob-table">
+      <thead>
+        <tr>
+          <th data-col="rank">#</th>
+          <th data-col="team">Team</th>
+          <th data-col="elo">Elo</th>
+          <th data-col="R32">KO Stage</th>
+          <th data-col="R16">Round of 16</th>
+          <th data-col="QF">Quarter-final</th>
+          <th data-col="SF">Semi-final</th>
+          <th data-col="F">Final</th>
+          <th data-col="W">&#127942; Champion</th>
+        </tr>
+      </thead>
+      <tbody id="table-body"></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ─────────── MATCH XG ─────────── -->
+<section id="xg">
+  <h2>Score Predictor</h2>
+  <div class="controls">
+    <select id="xg-t1"></select>
+    <span style="color:var(--muted)">vs</span>
+    <select id="xg-t2"></select>
+    <select id="xg-stage">
+      <option value="group">Group stage</option>
+      <option value="ko">Knockout</option>
+    </select>
+  </div>
+  <div class="chart-box" id="xg-result" style="max-width:560px;margin-bottom:1.75rem"></div>
+
+  <h2>Group Stage — Predicted Scores (all 72 matches)</h2>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr>
+        <th>Grp</th><th>Match</th><th>xG</th><th>Best bet</th>
+        <th>Win 1</th><th>Draw</th><th>Win 2</th><th>Other likely scores</th>
+      </tr></thead>
+      <tbody id="fx-body"></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ─────────── CHARTS ─────────── -->
+<section id="charts">
+  <div class="chart-grid">
+    <div class="chart-box">
+      <h2>Championship Odds — Top 16</h2>
+      <canvas id="champ-chart"></canvas>
+    </div>
+    <div class="chart-box">
+      <h2>Reach Each Round — Top 12</h2>
+      <canvas id="rounds-chart"></canvas>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────── HISTORY ─────────── -->
+<section id="history">
+  <div class="controls">
+    <label>Teams:</label>
+    <select id="hist-select" multiple size="5" style="min-width:180px"></select>
+    <label style="margin-left:.5rem">Stage:</label>
+    <select id="hist-stage">
+      <option value="W">Champion</option>
+      <option value="F">Final</option>
+      <option value="SF">Semi-final</option>
+      <option value="QF">Quarter-final</option>
+      <option value="R16">Round of 16</option>
+    </select>
+  </div>
+  <div class="chart-box" style="max-width:900px">
+    <canvas id="hist-chart"></canvas>
+  </div>
+</section>
+
+<!-- ─────────── BRACKET ─────────── -->
+<section id="bracket">
+  <h2>Group Stage</h2>
+  <div class="group-grid" id="group-grid"></div>
+  <h2>Knockout Bracket (expected paths)</h2>
+  <div class="bracket">
+    <div class="b-rounds" id="b-rounds"></div>
+  </div>
+</section>
+</div>
+
+<script>
+// ─── palette ───────────────────────────────────────────────────────────────
+const STAGE_COLORS={R32:"#1f6feb",R16:"#388bfd",QF:"#56d364",SF:"#d29922",F:"#e3b341",W:"#ffd700"};
+const TEAM_PALETTE=[
+  "#58a6ff","#3fb950","#d29922","#f85149","#a371f7","#79c0ff","#56d364",
+  "#ffa657","#ff7b72","#d2a8ff","#39d353","#ffa500","#4fc3f7","#ff80ab",
+  "#b0bec5","#80cbc4","#ffcc02","#ef9a9a","#ce93d8","#a5d6a7"
+];
+
+// ─── tab switching ──────────────────────────────────────────────────────────
+document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>{
+  document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));
+  document.querySelectorAll("section").forEach(x=>x.classList.remove("active"));
+  t.classList.add("active");
+  document.getElementById(t.dataset.tab).classList.add("active");
+  if(t.dataset.tab==="history") renderHistChart();
+}));
+
+// ─── data load ──────────────────────────────────────────────────────────────
+let DATA=null, histChart=null, champChart=null, roundsChart=null;
+
+fetch("forecast.json")
+  .then(r=>r.json())
+  .then(d=>{DATA=d; init();})
+  .catch(()=>{
+    document.getElementById("meta").textContent=
+      "Could not load forecast.json – run python update.py first, then refresh.";
+  });
+
+function init(){
+  const d=DATA;
+  const ts=new Date(d.updated).toLocaleString();
+  document.getElementById("meta").textContent=
+    `Last updated: ${ts} | ${(d.n_sims||20000).toLocaleString()} simulations | `+
+    `${(d.played_matches||[]).length} WC 2026 matches locked in | `+
+    `Elo ${Math.round((1-(d.market_weight||0))*100)}% / market ${Math.round((d.market_weight||0)*100)}%`;
+
+  const teams=Object.keys(d.probs).sort((a,b)=>d.probs[b].W-d.probs[a].W);
+  renderTable(teams);
+  renderChampChart(teams);
+  renderRoundsChart(teams);
+  renderGroups();
+  renderBracket();
+  populateHistSelect(teams);
+  initXG(teams);
+}
+
+// ─── MATCH XG / SCORE PREDICTOR ─────────────────────────────────────────────
+const MAX_G=10;
+function poissonPmf(k,lam){
+  let logp=-lam+k*Math.log(lam);
+  for(let i=2;i<=k;i++) logp-=Math.log(i);
+  return Math.exp(logp);
+}
+function hostAdv(team,stage){
+  if(!DATA.hosts||!DATA.hosts.includes(team)) return 0;
+  return stage==="group"?DATA.host_adv.group:DATA.host_adv.ko;
+}
+function predictMatch(t1,t2,stage){
+  const {a,b}=DATA.poisson;
+  const e1=DATA.elo[t1]+hostAdv(t1,stage), e2=DATA.elo[t2]+hostAdv(t2,stage);
+  const x=(e1-e2)/400;
+  const lam1=Math.exp(a+b*x), lam2=Math.exp(a-b*x);
+  const p1=[],p2=[];
+  for(let k=0;k<=MAX_G;k++){p1.push(poissonPmf(k,lam1));p2.push(poissonPmf(k,lam2));}
+  let total=0,pw=0,pd=0,pl=0;const scores=[];
+  for(let i=0;i<=MAX_G;i++)for(let j=0;j<=MAX_G;j++){
+    const p=p1[i]*p2[j];total+=p;
+    scores.push([i,j,p]);
+    if(i>j)pw+=p;else if(i===j)pd+=p;else pl+=p;
+  }
+  scores.forEach(s=>s[2]/=total);
+  scores.sort((x,y)=>y[2]-x[2]);
+  return {xg1:lam1,xg2:lam2,p1:pw/total,pd:pd/total,p2:pl/total,top:scores.slice(0,5)};
+}
+
+function initXG(teams){
+  const all=[...teams].sort();
+  ["xg-t1","xg-t2"].forEach((id,i)=>{
+    const sel=document.getElementById(id);
+    all.forEach(t=>{
+      const o=document.createElement("option");
+      o.value=t;o.textContent=t;sel.appendChild(o);
+    });
+    sel.value=teams[i];          // default: top-2 teams
+    sel.addEventListener("change",renderXG);
+  });
+  document.getElementById("xg-stage").addEventListener("change",renderXG);
+  renderXG();
+  renderFixtures();
+}
+
+function renderXG(){
+  const t1=document.getElementById("xg-t1").value;
+  const t2=document.getElementById("xg-t2").value;
+  const stage=document.getElementById("xg-stage").value;
+  const box=document.getElementById("xg-result");
+  if(t1===t2){box.innerHTML="<em>Pick two different teams.</em>";return;}
+  const m=predictMatch(t1,t2,stage);
+  const bar=(p,color)=>`<div style="background:${color};height:8px;border-radius:4px;width:${(p*100).toFixed(1)}%"></div>`;
+  box.innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.75rem">
+      <strong style="font-size:1.05rem">${t1}</strong>
+      <span style="font-size:1.5rem;font-weight:700;color:var(--accent)">
+        ${m.xg1.toFixed(2)} – ${m.xg2.toFixed(2)}
+      </span>
+      <strong style="font-size:1.05rem">${t2}</strong>
+    </div>
+    <div style="font-size:.75rem;color:var(--muted);text-align:center;margin-bottom:.75rem">expected goals (90 min)</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.75rem;text-align:center;margin-bottom:1rem">
+      <div>${(m.p1*100).toFixed(1)}%${bar(m.p1,"#3fb950")}<span style="font-size:.7rem;color:var(--muted)">${t1} wins</span></div>
+      <div>${(m.pd*100).toFixed(1)}%${bar(m.pd,"#d29922")}<span style="font-size:.7rem;color:var(--muted)">draw</span></div>
+      <div>${(m.p2*100).toFixed(1)}%${bar(m.p2,"#f85149")}<span style="font-size:.7rem;color:var(--muted)">${t2} wins</span></div>
+    </div>
+    <div style="font-size:.85rem">
+      <span style="color:var(--muted)">Most likely scores: </span>
+      ${m.top.map(([i,j,p],k)=>
+        `<span style="${k===0?"color:var(--accent);font-weight:700":""}">${i}–${j} <span style="color:var(--muted)">(${(p*100).toFixed(1)}%)</span></span>`
+      ).join(" &nbsp; ")}
+    </div>`;
+}
+
+function renderFixtures(){
+  const body=document.getElementById("fx-body");
+  const fx=DATA.fixtures||[];
+  body.innerHTML=fx.map(f=>{
+    const best=f.top_scores[0];
+    const others=f.top_scores.slice(1,4)
+      .map(([s,p])=>`${s.replace("-","–")} (${(p*100).toFixed(0)}%)`).join(", ");
+    const playedBadge=f.played
+      ?` <span style="background:var(--green);color:#000;border-radius:4px;padding:0 .35rem;font-size:.7rem;font-weight:700">FT ${f.played[0]}–${f.played[1]}</span>`
+      :"";
+    return `<tr>
+      <td style="color:var(--muted)">${f.group}</td>
+      <td><strong>${f.t1}</strong> vs <strong>${f.t2}</strong>${playedBadge}</td>
+      <td>${f.xg1.toFixed(2)} – ${f.xg2.toFixed(2)}</td>
+      <td style="color:var(--accent);font-weight:700">${best[0].replace("-","–")} <span style="color:var(--muted);font-weight:400">(${(best[1]*100).toFixed(0)}%)</span></td>
+      <td>${(f.p1*100).toFixed(0)}%</td>
+      <td>${(f.pd*100).toFixed(0)}%</td>
+      <td>${(f.p2*100).toFixed(0)}%</td>
+      <td style="color:var(--muted)">${others}</td>
+    </tr>`;
+  }).join("");
+}
+
+// ─── TABLE ──────────────────────────────────────────────────────────────────
+let sortCol="W", sortAsc=false;
+function pct(v){return v==null?"—":(v*100).toFixed(1)+"%"}
+function barCell(v,col){
+  const pct100=Math.round((v||0)*100);
+  return `<td class="bar-cell">
+    <div class="bar-bg" style="width:${pct100}%;background:${STAGE_COLORS[col]||"#58a6ff"}"></div>
+    <span class="bar-val">${pct(v)}</span>
+  </td>`;
+}
+
+function renderTable(teams){
+  const cols=["R32","R16","QF","SF","F","W"];
+  const sorted=[...teams].sort((a,b)=>{
+    let va=sortCol==="team"?a:sortCol==="elo"?(DATA.elo[a]||1500):(DATA.probs[a][sortCol]||0);
+    let vb=sortCol==="team"?b:sortCol==="elo"?(DATA.elo[b]||1500):(DATA.probs[b][sortCol]||0);
+    if(sortCol==="team"){va=va.toLowerCase();vb=vb.toLowerCase();}
+    return sortAsc?(va>vb?1:-1):(va<vb?1:-1);
+  });
+  const tbody=document.getElementById("table-body");
+  tbody.innerHTML=sorted.map((t,i)=>{
+    const p=DATA.probs[t]; const elo=DATA.elo[t]||1500;
+    return `<tr>
+      <td style="color:var(--muted)">${i+1}</td>
+      <td><strong>${t}</strong><span class="elo-badge">${Math.round(elo)}</span></td>
+      <td>${Math.round(elo)}</td>
+      ${cols.map(c=>barCell(p[c],c)).join("")}
+    </tr>`;
+  }).join("");
+  document.querySelectorAll("#prob-table thead th").forEach(th=>{
+    th.classList.remove("sort-asc","sort-desc");
+    if(th.dataset.col===sortCol) th.classList.add(sortAsc?"sort-asc":"sort-desc");
+    th.onclick=()=>{
+      if(sortCol===th.dataset.col) sortAsc=!sortAsc;
+      else{sortCol=th.dataset.col;sortAsc=false;}
+      renderTable(teams);
+    };
+  });
+}
+
+// ─── CHAMP BAR CHART ────────────────────────────────────────────────────────
+function renderChampChart(teams){
+  const top=teams.slice(0,16);
+  const ctx=document.getElementById("champ-chart");
+  if(champChart) champChart.destroy();
+  champChart=new Chart(ctx,{
+    type:"bar",
+    data:{
+      labels:top,
+      datasets:[{
+        label:"Champion %",
+        data:top.map(t=>(DATA.probs[t].W*100).toFixed(2)),
+        backgroundColor:top.map((_,i)=>TEAM_PALETTE[i%TEAM_PALETTE.length]),
+        borderRadius:4,
+      }]
+    },
+    options:{
+      indexAxis:"y",
+      plugins:{legend:{display:false},
+        tooltip:{callbacks:{label:c=>`${c.parsed.x.toFixed(1)}%`}}},
+      scales:{
+        x:{grid:{color:"#30363d"},ticks:{color:"#7d8590",callback:v=>v+"%"},
+           title:{display:true,text:"Probability",color:"#7d8590"}},
+        y:{grid:{display:false},ticks:{color:"#e6edf3"}}
+      }
+    }
+  });
+}
+
+// ─── ROUNDS GROUPED BAR ──────────────────────────────────────────────────────
+function renderRoundsChart(teams){
+  const top=teams.slice(0,12);
+  const stages=["R32","R16","QF","SF","F","W"];
+  const labels=["KO Round","R16","QF","SF","Final","Champion"];
+  const ctx=document.getElementById("rounds-chart");
+  if(roundsChart) roundsChart.destroy();
+  roundsChart=new Chart(ctx,{
+    type:"bar",
+    data:{
+      labels:top,
+      datasets:stages.map((s,i)=>({
+        label:labels[i],
+        data:top.map(t=>+(DATA.probs[t][s]*100).toFixed(2)),
+        backgroundColor:STAGE_COLORS[s]+"bb",
+        borderRadius:2,
+      }))
+    },
+    options:{
+      plugins:{legend:{labels:{color:"#e6edf3",boxWidth:12}},
+        tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${c.parsed.y.toFixed(1)}%`}}},
+      scales:{
+        x:{stacked:false,grid:{display:false},ticks:{color:"#e6edf3",maxRotation:45}},
+        y:{stacked:false,grid:{color:"#30363d"},ticks:{color:"#7d8590",callback:v=>v+"%"}}
+      }
+    }
+  });
+}
+
+// ─── HISTORY LINE CHART ──────────────────────────────────────────────────────
+function populateHistSelect(teams){
+  const sel=document.getElementById("hist-select");
+  const top8=teams.slice(0,8);
+  teams.forEach(t=>{
+    const o=document.createElement("option");
+    o.value=t; o.textContent=t;
+    if(top8.includes(t)) o.selected=true;
+    sel.appendChild(o);
+  });
+  sel.addEventListener("change",renderHistChart);
+  document.getElementById("hist-stage").addEventListener("change",renderHistChart);
+}
+
+function renderHistChart(){
+  if(!DATA) return;
+  const stage=document.getElementById("hist-stage").value;
+  const sel=document.getElementById("hist-select");
+  const selected=[...sel.selectedOptions].map(o=>o.value);
+  if(!selected.length) return;
+  const hist=DATA.history||[];
+  const labels=hist.map(h=>new Date(h.ts).toLocaleDateString());
+  const ctx=document.getElementById("hist-chart");
+  if(histChart) histChart.destroy();
+  histChart=new Chart(ctx,{
+    type:"line",
+    data:{
+      labels,
+      datasets:selected.map((t,i)=>({
+        label:t,
+        data:hist.map(h=>+(((h.probs[t]||{})[stage]||0)*100).toFixed(2)),
+        borderColor:TEAM_PALETTE[i%TEAM_PALETTE.length],
+        backgroundColor:"transparent",
+        tension:.3,pointRadius:3,borderWidth:2,
+      }))
+    },
+    options:{
+      plugins:{legend:{labels:{color:"#e6edf3",boxWidth:12}},
+        tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${c.parsed.y.toFixed(1)}%`}}},
+      scales:{
+        x:{grid:{color:"#30363d"},ticks:{color:"#7d8590"}},
+        y:{grid:{color:"#30363d"},ticks:{color:"#7d8590",callback:v=>v+"%"},
+           title:{display:true,text:"Probability",color:"#7d8590"}}
+      }
+    }
+  });
+}
+
+// ─── GROUPS ──────────────────────────────────────────────────────────────────
+function renderGroups(){
+  const g=document.getElementById("group-grid");
+  g.innerHTML=Object.entries(DATA.groups).map(([ltr,teams])=>{
+    const sorted=[...teams].sort((a,b)=>(DATA.probs[b].W||0)-(DATA.probs[a].W||0));
+    return `<div class="group-card">
+      <h3>Group ${ltr}</h3>
+      ${sorted.map(t=>`<div class="gteam">
+        <span>${t}</span>
+        <span>${pct(DATA.probs[t].W)} win</span>
+      </div>`).join("")}
+    </div>`;
+  }).join("");
+}
+
+// ─── BRACKET ────────────────────────────────────────────────────────────────
+// Build an expected bracket using the most-likely winner at each step.
+// Third-place slots: keep the 8 most likely qualifying thirds, then assign
+// each group to exactly one slot (backtracking, mirrors update.py).
+function renderBracket(){
+  if(!DATA) return;
+  const probs=DATA.probs;
+  const groups=DATA.groups;
+  // Compute expected group standings (by champion prob)
+  const winners={},runners={},thirds={};
+  Object.entries(groups).forEach(([ltr,teams])=>{
+    const s=[...teams].sort((a,b)=>(probs[b].W||0)-(probs[a].W||0));
+    winners[ltr]=s[0]; runners[ltr]=s[1]; thirds[ltr]=s[2];
+  });
+
+  const bracket=DATA.bracket;
+
+  // 8 most likely qualifying third-place groups (by their team's R16 prob)
+  const thirdGroups=Object.keys(thirds)
+    .sort((a,b)=>(probs[thirds[b]].R16||0)-(probs[thirds[a]].R16||0))
+    .slice(0,8);
+  // constrained slots: [matchIdx, side, allowed groups]
+  const slots=[];
+  bracket.forEach((pair,i)=>pair.forEach((code,j)=>{
+    if(code.startsWith("3rd")) slots.push([i,j,new Set(code.split(":")[1])]);
+  }));
+  slots.sort((s1,s2)=>
+    thirdGroups.filter(g=>s1[2].has(g)).length-
+    thirdGroups.filter(g=>s2[2].has(g)).length);
+  const slotAssign={}, used=new Set();
+  (function bt(k){
+    if(k===slots.length) return true;
+    const [i,j,allowed]=slots[k];
+    for(const g of thirdGroups){
+      if(!used.has(g)&&allowed.has(g)){
+        used.add(g); slotAssign[i+","+j]=g;
+        if(bt(k+1)) return true;
+        used.delete(g); delete slotAssign[i+","+j];
+      }
+    }
+    return false;
+  })(0);
+
+  function resolveSlot(i,j,code){
+    if(code.startsWith("3rd")){
+      const g=slotAssign[i+","+j];
+      return g?thirds[g]:"?";
+    }
+    return code[0]==="1"?winners[code[1]]:runners[code[1]];
+  }
+
+  // R32 pairs
+  const r32Pairs=bracket.map(([c1,c2],i)=>[
+    resolveSlot(i,0,c1),
+    resolveSlot(i,1,c2)
+  ]);
+
+  function expectedWinner(t1,t2){
+    return (probs[t1]&&probs[t2])
+      ? ((probs[t1].W||0)>=(probs[t2].W||0)?t1:t2) : (t1||t2||"?");
+  }
+
+  function buildRound(pairs){
+    return pairs.map(([t1,t2])=>{
+      const w=expectedWinner(t1,t2);
+      const w1p=pct(probs[t1]&&probs[t1].W);
+      const w2p=pct(probs[t2]&&probs[t2].W);
+      return {t1,t2,w,w1p,w2p};
+    });
+  }
+
+  let rounds=[{label:"Round of 32",pairs:r32Pairs}];
+  let currentPairs=r32Pairs;
+  const roundLabels=["Round of 16","Quarter-finals","Semi-finals","Final"];
+  for(let i=0;i<4;i++){
+    const winners16=[];
+    for(let j=0;j<currentPairs.length;j+=2){
+      const [t1]=currentPairs[j], [t2]=currentPairs[j+1];
+      const w1=expectedWinner(...currentPairs[j]);
+      const w2=expectedWinner(...currentPairs[j+1]);
+      winners16.push([w1,w2]);
+    }
+    rounds.push({label:roundLabels[i],pairs:winners16});
+    currentPairs=winners16;
+  }
+
+  const container=document.getElementById("b-rounds");
+  container.innerHTML=rounds.map(rnd=>`
+    <div class="b-stage">
+      <div class="b-stage-label">${rnd.label}</div>
+      ${buildRound(rnd.pairs).map(m=>`
+        <div class="b-match">
+          <div class="team"><span>${m.t1||"?"}</span><span>${m.w1p}</span></div>
+          <div class="vs">vs</div>
+          <div class="team"><span>${m.t2||"?"}</span><span>${m.w2p}</span></div>
+        </div>
+      `).join("")}
+    </div>
+  `).join("");
+
+  // Show expected champion
+  if(currentPairs.length===1){
+    const champ=expectedWinner(...currentPairs[0]);
+    const champDiv=document.createElement("div");
+    champDiv.className="b-stage";
+    champDiv.innerHTML=`<div class="b-stage-label">Expected Winner</div>
+      <div class="b-match" style="border-color:#ffd700">
+        <div class="team"><span class="winner-badge">&#127942; ${champ}</span></div>
+        <div class="team" style="color:var(--muted);font-size:.75rem">
+          <span>Champion odds: ${pct(probs[champ]&&probs[champ].W)}</span>
+        </div>
+      </div>`;
+    container.appendChild(champDiv);
+  }
+}
+</script>
+</body>
+</html>

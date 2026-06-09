@@ -1,0 +1,9 @@
+# downloaded fresh by update.py on every run
+results.csv
+
+# local duplicates
+*(1)*
+
+__pycache__/
+*.pyc
+wc2026_forecast.csv
