@@ -123,6 +123,46 @@ MARKET_ODDS = {
     "Jordan": 2501, "Haiti": 2501, "Curaçao": 3501,
 }
 
+# ── friends-league scoring rules ─────────────────────────────────────────────
+# (exact score pts, correct winner pts) per stage.
+# EXACT_INCLUDES_WINNER: True = an exact pick also earns the winner points.
+EXACT_INCLUDES_WINNER = True
+MATCH_PTS = {"group": (45, 30), "R32": (90, 60), "R16": (135, 90),
+             "QF": (180, 120), "SF": (225, 150), "F": (270, 180)}
+CHAMPION_PTS = 250
+POSITION_PTS = 25          # per correct group-standing position
+GOAL_PTS = {               # points per goal by player position, per stage
+    "group": {"def": 32, "mid": 16, "att": 8},
+    "R32":   {"def": 64, "mid": 32, "att": 16},
+    "R16":   {"def": 96, "mid": 48, "att": 24},
+    "QF":    {"def": 128, "mid": 64, "att": 32},
+    "SF":    {"def": 160, "mid": 80, "att": 40},
+    "F":     {"def": 192, "mid": 96, "att": 48},
+}
+# Candidate top-scorer picks: (name, team, position, share of team goals).
+# >>> EDIT THIS LIST with the real 2026 squads. Names and shares below are
+# pre-tournament guesses, NOT live data. "share" = fraction of the team's
+# goals you expect this player to score. "def" includes goalkeepers.
+# Position must match how YOUR league classifies the player.
+PLAYERS = [
+    ("Kylian Mbappé",     "France",      "att", 0.35),
+    ("Harry Kane",        "England",     "att", 0.32),
+    ("Erling Haaland",    "Norway",      "att", 0.42),
+    ("Lautaro Martínez",  "Argentina",   "att", 0.22),
+    ("Lionel Messi",      "Argentina",   "att", 0.20),
+    ("Lamine Yamal",      "Spain",       "att", 0.22),
+    ("Vinícius Júnior",   "Brazil",      "att", 0.22),
+    ("Cristiano Ronaldo", "Portugal",    "att", 0.25),
+    ("Memphis Depay",     "Netherlands", "att", 0.25),
+    ("Jude Bellingham",   "England",     "mid", 0.12),
+    ("Jamal Musiala",     "Germany",     "mid", 0.15),
+    ("Federico Valverde", "Uruguay",     "mid", 0.15),
+    ("Achraf Hakimi",     "Morocco",     "def", 0.12),
+    ("Denzel Dumfries",   "Netherlands", "def", 0.10),
+    ("Virgil van Dijk",   "Netherlands", "def", 0.05),
+    ("Antonio Rüdiger",   "Germany",     "def", 0.04),
+]
+
 BRACKET_R32 = [
     ("1E", "3rd:ABCDF"), ("1I", "3rd:CDFGH"),
     ("2A", "2B"),        ("1F", "2C"),
@@ -163,16 +203,22 @@ def host_adv(team, stage):
     if team not in HOSTS: return 0.0
     return HOST_ADV_GROUP if stage == "group" else HOST_ADV_KO
 
-def play_ko(t1, t2, elo, a, b, fixed_facts=None):
+def play_ko(t1, t2, elo, a, b, fixed_facts=None, goals_acc=None, stage=None):
     # already played in reality -> fixed result (draw = went to pens, 50/50)
     if fixed_facts and (t1, t2) in fixed_facts:
         g1, g2 = fixed_facts[(t1, t2)]
+        if goals_acc is not None:
+            goals_acc[t1][stage] += g1; goals_acc[t2][stage] += g2
         if g1 != g2: return t1 if g1 > g2 else t2
+        return t1 if rng.random() < 0.5 else t2
     a1, a2 = host_adv(t1, "ko"), host_adv(t2, "ko")
     g1, g2 = sim_goals(elo[t1], elo[t2], a, b, a1, a2)
+    if g1 == g2:                       # extra time at 1/3 scoring rate
+        e1, e2 = sim_goals(elo[t1], elo[t2], a, b, a1, a2, factor=1/3)
+        g1 += e1; g2 += e2
+    if goals_acc is not None:
+        goals_acc[t1][stage] += g1; goals_acc[t2][stage] += g2
     if g1 != g2: return t1 if g1 > g2 else t2
-    e1, e2 = sim_goals(elo[t1], elo[t2], a, b, a1, a2, factor=1/3)
-    if e1 != e2: return t1 if e1 > e2 else t2
     return t1 if rng.random() < 0.5 else t2
 
 def assign_thirds(qualified):
@@ -202,7 +248,7 @@ def build_fixed_facts(played):
         facts[(a, h)] = (ga, gh)      # both orderings for easy lookup
     return facts
 
-def simulate_once(elo, a, b, fixed_facts):
+def simulate_once(elo, a, b, fixed_facts, goals_acc=None, pos_acc=None):
     winners, runners, thirds = {}, {}, []
     for grp, teams in GROUPS.items():
         pts = defaultdict(int); gf = defaultdict(int); ga = defaultdict(int)
@@ -214,6 +260,8 @@ def simulate_once(elo, a, b, fixed_facts):
                 else:
                     g1, g2 = sim_goals(elo[t1], elo[t2], a, b,
                                        host_adv(t1, "group"), host_adv(t2, "group"))
+                if goals_acc is not None:
+                    goals_acc[t1]["group"] += g1; goals_acc[t2]["group"] += g2
                 gf[t1] += g1; ga[t1] += g2; gf[t2] += g2; ga[t2] += g1
                 if g1 > g2:   pts[t1] += 3
                 elif g2 > g1: pts[t2] += 3
@@ -221,6 +269,8 @@ def simulate_once(elo, a, b, fixed_facts):
         order = sorted(teams,
                        key=lambda t: (pts[t], gf[t]-ga[t], gf[t], rng.random()),
                        reverse=True)
+        if pos_acc is not None:
+            for k, tm in enumerate(order): pos_acc[tm][k] += 1
         winners[grp], runners[grp] = order[0], order[1]
         thirds.append((pts[order[2]], gf[order[2]]-ga[order[2]], gf[order[2]],
                        rng.random(), grp, order[2]))
@@ -235,22 +285,27 @@ def simulate_once(elo, a, b, fixed_facts):
 
     r32 = [(resolve(i, 0, p[0]), resolve(i, 1, p[1]))
            for i, p in enumerate(BRACKET_R32)]
-    rnd = [play_ko(t1, t2, elo, a, b, fixed_facts) for t1, t2 in r32]
+    rnd = [play_ko(t1, t2, elo, a, b, fixed_facts, goals_acc, "R32")
+           for t1, t2 in r32]
     results = {t: "R32" for pair in r32 for t in pair}
     for stage in ["R16", "QF", "SF", "F"]:
         for t in rnd: results[t] = stage
-        rnd = [play_ko(rnd[i], rnd[i+1], elo, a, b, fixed_facts)
+        rnd = [play_ko(rnd[i], rnd[i+1], elo, a, b, fixed_facts, goals_acc, stage)
                for i in range(0, len(rnd), 2)]
     results[rnd[0]] = "W"
     return results
 
 STAGES = ["R32", "R16", "QF", "SF", "F", "W"]
 
+GOAL_STAGES = ["group", "R32", "R16", "QF", "SF", "F"]
+
 def run_simulation(elo, a, b, played, n_sims=N_SIMS):
     fixed = build_fixed_facts(played)
     counts = {t: defaultdict(int) for t in ALL_TEAMS}
+    goals_acc = {t: defaultdict(float) for t in ALL_TEAMS}
+    pos_acc = {t: [0, 0, 0, 0] for t in ALL_TEAMS}
     for _ in range(n_sims):
-        res = simulate_once(elo, a, b, fixed)
+        res = simulate_once(elo, a, b, fixed, goals_acc, pos_acc)
         for team in ALL_TEAMS:
             reached = res.get(team)
             if reached is None: continue
@@ -259,7 +314,10 @@ def run_simulation(elo, a, b, played, n_sims=N_SIMS):
     probs = {}
     for t, c in counts.items():
         probs[t] = {s: round(c[s] / n_sims, 6) for s in STAGES}
-    return probs
+    team_goals = {t: {s: round(goals_acc[t][s] / n_sims, 3) for s in GOAL_STAGES}
+                  for t in ALL_TEAMS}
+    positions = {t: [round(c / n_sims, 4) for c in pos_acc[t]] for t in ALL_TEAMS}
+    return probs, team_goals, positions
 
 # ── market blend ─────────────────────────────────────────────────────────────
 def blend_market(elo, a, b, played):
@@ -276,7 +334,7 @@ def blend_market(elo, a, b, played):
         return dict(elo)
     print("Calibrating market blend (5,000 sims) ...")
     n_cal = 5000
-    base = run_simulation(elo, a, b, played, n_sims=n_cal)
+    base = run_simulation(elo, a, b, played, n_sims=n_cal)[0]
     p_model = np.array([max(base[t]["W"], 0.5 / n_cal) for t in ALL_TEAMS])
     inv = np.array([1.0 / MARKET_ODDS[t] for t in ALL_TEAMS])
     p_mkt = inv / inv.sum()                      # strips the overround
@@ -307,9 +365,36 @@ def match_prediction(t1, t2, elo, a, b, stage="group"):
     flat = [(f"{i}-{j}", float(grid[i, j]))
             for i in range(MAX_G + 1) for j in range(MAX_G + 1)]
     top = sorted(flat, key=lambda kv: -kv[1])[:5]
+    # friends-league optimal pick: maximise EV = exact_pts*P(score) + winner_pts*P(result)
+    # (exact:winner ratio is 1.5 at every stage, so the optimal pick is the
+    # same for all stages; EV reported in group-stage points)
+    ex, wn = MATCH_PTS["group"]
+    class_p = {1: pw, 0: pd_, -1: pl}
+    best, best_ev = "1-1", -1.0
+    for i in range(MAX_G + 1):
+        for j in range(MAX_G + 1):
+            cls = 1 if i > j else (0 if i == j else -1)
+            p = float(grid[i, j])
+            ev = (ex * p + wn * class_p[cls] if EXACT_INCLUDES_WINNER
+                  else ex * p + wn * (class_p[cls] - p))
+            if ev > best_ev:
+                best, best_ev = f"{i}-{j}", ev
     return {"xg1": round(lam1, 2), "xg2": round(lam2, 2),
             "p1": round(pw, 4), "pd": round(pd_, 4), "p2": round(pl, 4),
-            "top_scores": [[s, round(p, 4)] for s, p in top]}
+            "top_scores": [[s, round(p, 4)] for s, p in top],
+            "best_pick": [best, round(best_ev, 1)]}
+
+def player_evs(team_goals):
+    """Expected friends-league points per candidate top-scorer pick."""
+    rows = []
+    for name, team, pos, share in PLAYERS:
+        tg = team_goals.get(team, {})
+        eg = {s: tg.get(s, 0.0) * share for s in GOAL_STAGES}
+        pts = sum(eg[s] * GOAL_PTS[s][pos] for s in GOAL_STAGES)
+        rows.append({"name": name, "team": team, "pos": pos, "share": share,
+                     "exp_goals": round(sum(eg.values()), 2),
+                     "exp_pts": round(pts, 1)})
+    return sorted(rows, key=lambda r: -r["exp_pts"])
 
 def build_fixtures(elo, a, b, facts):
     """All 72 group matches with xG + score prediction; played ones flagged."""
@@ -365,11 +450,12 @@ def main():
 
     # 6. Simulate
     print(f"Simulating {N_SIMS:,} tournaments ...")
-    probs = run_simulation(elo_blend, a, b, played)
+    probs, team_goals, positions = run_simulation(elo_blend, a, b, played)
     print("  done.")
 
-    # 7. Per-match xG predictions for the group stage
+    # 7. Per-match xG predictions for the group stage + player EVs
     fixtures = build_fixtures(elo_blend, a, b, facts)
+    players = player_evs(team_goals)
 
     # 8. Odds history
     ts = datetime.now(timezone.utc).isoformat()
@@ -392,6 +478,16 @@ def main():
         "elo_raw": {t: round(elo.get(t, 1500), 1) for t in ALL_TEAMS},
         "fixtures": fixtures,
         "probs": probs,
+        "team_goals": team_goals,
+        "positions": positions,
+        "players": players,
+        "league": {
+            "match_pts": MATCH_PTS,
+            "goal_pts": GOAL_PTS,
+            "champion": CHAMPION_PTS,
+            "position": POSITION_PTS,
+            "exact_includes_winner": EXACT_INCLUDES_WINNER,
+        },
         "history": history,          # full history in one file for simplicity
     }
     with open(OUT, "w") as f:
@@ -404,6 +500,10 @@ def main():
     print("\nTop 10 champion odds:")
     for t, p in champs[:10]:
         print(f"  {t:<30} {p['W']:6.1%}")
+    print("\nTop scorer picks by expected league points:")
+    for p in players[:8]:
+        print(f"  {p['name']:<22} {p['team']:<14} {p['pos']:<4} "
+              f"{p['exp_goals']:>5.2f} xGoals  {p['exp_pts']:>7.1f} pts")
 
 if __name__ == "__main__":
     main()

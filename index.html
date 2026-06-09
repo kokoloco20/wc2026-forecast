@@ -88,6 +88,7 @@ canvas{max-height:400px}
 <div class="tabs">
   <button class="tab active" data-tab="table">Probability Table</button>
   <button class="tab" data-tab="xg">Match xG</button>
+  <button class="tab" data-tab="league">Friends League</button>
   <button class="tab" data-tab="charts">Championship Odds</button>
   <button class="tab" data-tab="history">Odds History</button>
   <button class="tab" data-tab="bracket">Groups &amp; Bracket</button>
@@ -124,7 +125,11 @@ canvas{max-height:400px}
     <select id="xg-t2"></select>
     <select id="xg-stage">
       <option value="group">Group stage</option>
-      <option value="ko">Knockout</option>
+      <option value="R32">Round of 32</option>
+      <option value="R16">Round of 16</option>
+      <option value="QF">Quarter-final</option>
+      <option value="SF">Semi-final</option>
+      <option value="F">Final</option>
     </select>
   </div>
   <div class="chart-box" id="xg-result" style="max-width:560px;margin-bottom:1.75rem"></div>
@@ -138,6 +143,40 @@ canvas{max-height:400px}
       </tr></thead>
       <tbody id="fx-body"></tbody>
     </table>
+  </div>
+</section>
+
+<!-- ─────────── FRIENDS LEAGUE ─────────── -->
+<section id="league">
+  <h2>&#127942; Champion Pick (250 pts)</h2>
+  <div class="tbl-wrap" style="max-width:480px;margin-bottom:1.75rem">
+    <table><thead><tr><th>Team</th><th>P(champion)</th><th>Expected pts</th></tr></thead>
+    <tbody id="lg-champ"></tbody></table>
+  </div>
+
+  <h2>Top Scorer Picks — pick 4 (points per goal, by position &amp; stage)</h2>
+  <p style="color:var(--muted);font-size:.8rem;margin-bottom:.75rem">
+    Top 4 highlighted. Defender/GK goals pay 4&times; attacker goals — wingbacks and
+    penalty-taking defenders from deep-run teams are gold.
+    Edit the PLAYERS list in update.py to add candidates / fix shares.</p>
+  <div class="tbl-wrap" style="margin-bottom:1.75rem">
+    <table><thead><tr>
+      <th>#</th><th>Player</th><th>Team</th><th>Pos</th><th>Share of team goals</th>
+      <th>Exp. goals</th><th>Expected pts</th>
+    </tr></thead><tbody id="lg-players"></tbody></table>
+  </div>
+
+  <h2>Group Standings — predicted order (25 pts per correct position)</h2>
+  <div class="group-grid" id="lg-groups" style="margin-bottom:1.75rem"></div>
+
+  <h2>Group Match Picks — EV-optimal scores</h2>
+  <p style="color:var(--muted);font-size:.8rem;margin-bottom:.75rem">
+    EV = 45 &times; P(exact) + 30 &times; P(winner). The optimal pick is sometimes not
+    the most likely score.</p>
+  <div class="tbl-wrap">
+    <table><thead><tr>
+      <th>Grp</th><th>Match</th><th>Pick this</th><th>EV (pts)</th><th>Most likely</th>
+    </tr></thead><tbody id="lg-fixtures"></tbody></table>
   </div>
 </section>
 
@@ -230,6 +269,52 @@ function init(){
   renderBracket();
   populateHistSelect(teams);
   initXG(teams);
+  renderLeague(teams);
+}
+
+// ─── FRIENDS LEAGUE ─────────────────────────────────────────────────────────
+function renderLeague(teams){
+  const L=DATA.league, probs=DATA.probs;
+  // champion EV
+  document.getElementById("lg-champ").innerHTML=teams.slice(0,6).map((t,i)=>
+    `<tr ${i===0?'style="background:#1c2a1c"':''}>
+      <td><strong>${t}</strong></td><td>${pct(probs[t].W)}</td>
+      <td><strong>${(probs[t].W*L.champion).toFixed(1)}</strong></td></tr>`).join("");
+  // players (top 4 = your picks)
+  const posLabel={def:"DEF/GK",mid:"MID",att:"ATT"};
+  document.getElementById("lg-players").innerHTML=(DATA.players||[]).map((p,i)=>
+    `<tr ${i<4?'style="background:#1c2a1c"':''}>
+      <td style="color:var(--muted)">${i+1}</td>
+      <td><strong>${p.name}</strong></td><td>${p.team}</td>
+      <td>${posLabel[p.pos]||p.pos}</td><td>${(p.share*100).toFixed(0)}%</td>
+      <td>${p.exp_goals.toFixed(2)}</td>
+      <td><strong>${p.exp_pts.toFixed(1)}</strong></td></tr>`).join("");
+  // group standings: order by expected finishing position
+  document.getElementById("lg-groups").innerHTML=
+    Object.entries(DATA.groups).map(([ltr,gteams])=>{
+      const ordered=[...gteams].sort((a,b)=>{
+        const ea=DATA.positions[a].reduce((s,p,k)=>s+p*k,0);
+        const eb=DATA.positions[b].reduce((s,p,k)=>s+p*k,0);
+        return ea-eb;
+      });
+      return `<div class="group-card"><h3>Group ${ltr}</h3>`+
+        ordered.map((t,k)=>{
+          const p=DATA.positions[t][k];
+          return `<div class="gteam"><span>${k+1}. ${t}</span>
+            <span>${(p*100).toFixed(0)}% &middot; EV ${(p*L.position).toFixed(1)}</span></div>`;
+        }).join("")+`</div>`;
+    }).join("");
+  // fixture picks
+  document.getElementById("lg-fixtures").innerHTML=(DATA.fixtures||[]).map(f=>{
+    const diff=f.best_pick[0]!==f.top_scores[0][0];
+    return `<tr>
+      <td style="color:var(--muted)">${f.group}</td>
+      <td>${f.t1} vs ${f.t2}</td>
+      <td style="color:var(--accent);font-weight:700">${f.best_pick[0].replace("-","–")}</td>
+      <td>${f.best_pick[1].toFixed(1)}</td>
+      <td style="color:${diff?"var(--yellow)":"var(--muted)"}">${f.top_scores[0][0].replace("-","–")}</td>
+    </tr>`;
+  }).join("");
 }
 
 // ─── MATCH XG / SCORE PREDICTOR ─────────────────────────────────────────────
@@ -242,6 +327,17 @@ function poissonPmf(k,lam){
 function hostAdv(team,stage){
   if(!DATA.hosts||!DATA.hosts.includes(team)) return 0;
   return stage==="group"?DATA.host_adv.group:DATA.host_adv.ko;
+}
+function bestPick(m,stage){
+  const L=DATA.league;
+  const [ex,wn]=L.match_pts[stage]||L.match_pts.group;
+  let best=null,bev=-1;
+  m.all.forEach(([i,j,p])=>{
+    const clsP=i>j?m.p1:(i===j?m.pd:m.p2);
+    const ev=L.exact_includes_winner?ex*p+wn*clsP:ex*p+wn*(clsP-p);
+    if(ev>bev){bev=ev;best=[i,j];}
+  });
+  return {score:`${best[0]}–${best[1]}`,ev:bev};
 }
 function predictMatch(t1,t2,stage){
   const {a,b}=DATA.poisson;
@@ -258,7 +354,8 @@ function predictMatch(t1,t2,stage){
   }
   scores.forEach(s=>s[2]/=total);
   scores.sort((x,y)=>y[2]-x[2]);
-  return {xg1:lam1,xg2:lam2,p1:pw/total,pd:pd/total,p2:pl/total,top:scores.slice(0,5)};
+  return {xg1:lam1,xg2:lam2,p1:pw/total,pd:pd/total,p2:pl/total,
+          top:scores.slice(0,5),all:scores};
 }
 
 function initXG(teams){
@@ -299,12 +396,18 @@ function renderXG(){
       <div>${(m.pd*100).toFixed(1)}%${bar(m.pd,"#d29922")}<span style="font-size:.7rem;color:var(--muted)">draw</span></div>
       <div>${(m.p2*100).toFixed(1)}%${bar(m.p2,"#f85149")}<span style="font-size:.7rem;color:var(--muted)">${t2} wins</span></div>
     </div>
-    <div style="font-size:.85rem">
+    <div style="font-size:.85rem;margin-bottom:.6rem">
       <span style="color:var(--muted)">Most likely scores: </span>
       ${m.top.map(([i,j,p],k)=>
         `<span style="${k===0?"color:var(--accent);font-weight:700":""}">${i}–${j} <span style="color:var(--muted)">(${(p*100).toFixed(1)}%)</span></span>`
       ).join(" &nbsp; ")}
-    </div>`;
+    </div>
+    ${DATA.league?(()=>{const bp=bestPick(m,stage);
+      return `<div style="font-size:.85rem;border-top:1px solid var(--border);padding-top:.6rem">
+        <span style="color:var(--muted)">Friends-league pick (${stage==="group"?"group":stage} points): </span>
+        <strong style="color:#3fb950">${bp.score}</strong>
+        <span style="color:var(--muted)"> — EV ${bp.ev.toFixed(1)} pts</span>
+      </div>`;})():""}`;
 }
 
 function renderFixtures(){
