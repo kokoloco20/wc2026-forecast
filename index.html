@@ -172,11 +172,13 @@ canvas{max-height:400px}
 
   <h2>Group Match Picks — EV-optimal scores</h2>
   <p style="color:var(--muted);font-size:.8rem;margin-bottom:.75rem">
-    EV = 45 &times; P(exact) + 30 &times; P(winner). The optimal pick is sometimes not
-    the most likely score.</p>
+    EV = 45 &times; P(exact) + 30 &times; P(winner). "Also fine" lists every score
+    within 2 EV points of the best pick — inside that zone the model has no real
+    opinion, so follow your gut.</p>
   <div class="tbl-wrap">
     <table><thead><tr>
-      <th>Grp</th><th>Match</th><th>Pick this</th><th>EV (pts)</th><th>Most likely</th>
+      <th>Grp</th><th>Match</th><th>Pick this</th><th>EV (pts)</th>
+      <th>Also fine (EV gap)</th><th>Most likely</th>
     </tr></thead><tbody id="lg-fixtures"></tbody></table>
   </div>
 </section>
@@ -410,14 +412,20 @@ function renderLeague(teams){
             <span>${(p*100).toFixed(0)}% &middot; EV ${(p*L.position).toFixed(1)}</span></div>`;
         }).join("")+`</div>`;
     }).join("");
-  // fixture picks
+  // fixture picks (EVs recomputed client-side so we can show near-ties)
   document.getElementById("lg-fixtures").innerHTML=(DATA.fixtures||[]).map(f=>{
-    const diff=f.best_pick[0]!==f.top_scores[0][0];
+    const evs=scoreEVs(predictMatch(f.t1,f.t2,"group"),"group");
+    const best=evs[0];
+    const alts=evs.slice(1).filter(e=>e.ev>=best.ev-2).slice(0,4)
+      .map(e=>`${e.score} <span style="color:var(--muted)">(−${(best.ev-e.ev).toFixed(1)})</span>`)
+      .join(" &nbsp; ");
+    const diff=best.score.replace("–","-")!==f.top_scores[0][0];
     return `<tr>
       <td style="color:var(--muted)">${f.group}</td>
       <td>${f.t1} vs ${f.t2}</td>
-      <td style="color:var(--accent);font-weight:700">${f.best_pick[0].replace("-","–")}</td>
-      <td>${f.best_pick[1].toFixed(1)}</td>
+      <td style="color:var(--accent);font-weight:700">${best.score}</td>
+      <td>${best.ev.toFixed(1)}</td>
+      <td>${alts||'<span style="color:var(--muted)">— pick is clear</span>'}</td>
       <td style="color:${diff?"var(--yellow)":"var(--muted)"}">${f.top_scores[0][0].replace("-","–")}</td>
     </tr>`;
   }).join("");
@@ -434,17 +442,17 @@ function hostAdv(team,stage){
   if(!DATA.hosts||!DATA.hosts.includes(team)) return 0;
   return stage==="group"?DATA.host_adv.group:DATA.host_adv.ko;
 }
-function bestPick(m,stage){
+function scoreEVs(m,stage){
+  // every scoreline ranked by friends-league EV
   const L=DATA.league;
   const [ex,wn]=L.match_pts[stage]||L.match_pts.group;
-  let best=null,bev=-1;
-  m.all.forEach(([i,j,p])=>{
+  return m.all.map(([i,j,p])=>{
     const clsP=i>j?m.p1:(i===j?m.pd:m.p2);
     const ev=L.exact_includes_winner?ex*p+wn*clsP:ex*p+wn*(clsP-p);
-    if(ev>bev){bev=ev;best=[i,j];}
-  });
-  return {score:`${best[0]}–${best[1]}`,ev:bev};
+    return {score:`${i}–${j}`,ev};
+  }).sort((a,b)=>b.ev-a.ev);
 }
+function bestPick(m,stage){return scoreEVs(m,stage)[0];}
 function predictMatch(t1,t2,stage){
   const {a,b}=DATA.poisson;
   const e1=DATA.elo[t1]+hostAdv(t1,stage), e2=DATA.elo[t2]+hostAdv(t2,stage);
@@ -508,11 +516,19 @@ function renderXG(){
         `<span style="${k===0?"color:var(--accent);font-weight:700":""}">${i}–${j} <span style="color:var(--muted)">(${(p*100).toFixed(1)}%)</span></span>`
       ).join(" &nbsp; ")}
     </div>
-    ${DATA.league?(()=>{const bp=bestPick(m,stage);
+    ${DATA.league?(()=>{
+      const evs=scoreEVs(m,stage);
+      const best=evs[0];
+      const shown=evs.slice(0,5);
       return `<div style="font-size:.85rem;border-top:1px solid var(--border);padding-top:.6rem">
-        <span style="color:var(--muted)">Friends-league pick (${stage==="group"?"group":stage} points): </span>
-        <strong style="color:#3fb950">${bp.score}</strong>
-        <span style="color:var(--muted)"> — EV ${bp.ev.toFixed(1)} pts</span>
+        <span style="color:var(--muted)">Friends-league picks (${stage==="group"?"group":stage} points), best first: </span><br>
+        ${shown.map((e,k)=>{
+          const inZone=e.ev>=best.ev-2;
+          return `<span style="${k===0?"color:#3fb950;font-weight:700":(inZone?"color:var(--text)":"color:var(--muted)")}">
+            ${e.score} <span style="color:var(--muted)">(${e.ev.toFixed(1)})</span></span>`;
+        }).join(" &nbsp; ")}
+        <div style="color:var(--muted);font-size:.75rem;margin-top:.25rem">
+          Anything within 2 EV of the best is a coin flip — pick on gut.</div>
       </div>`;})():""}`;
 }
 
